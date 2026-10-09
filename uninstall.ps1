@@ -1,9 +1,9 @@
-﻿<#
+<#
   dsh-deepseek-web-relay —— 卸载 / 紧急禁用脚本（幂等）
 
   用法（cd 到插件目录后）：
     powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
-    powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -DshHome "D:\dshl"
+    powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -DshHome "C:\Users\<你>\.dsh"
 
   做两件事，做完重启实例即彻底不加载：
     1. 从 profile package.json -> dsh.profile.bundles 里移除本插件；
@@ -14,7 +14,8 @@
 
 [CmdletBinding()]
 param(
-  [string]$DshHome = 'D:\dshl2',
+  # 默认取当前用户的 DSH Home（%USERPROFILE%\.dsh）。多实例（Launcher）用户请显式传 -DshHome。
+  [string]$DshHome = (Join-Path $env:USERPROFILE '.dsh'),
   [string]$Profile = 'tauri',
   [string]$PluginPath = ''
 )

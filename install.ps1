@@ -3,7 +3,7 @@
 
   用法（在 PowerShell 里，cd 到插件目录后）：
     powershell -ExecutionPolicy Bypass -File .\install.ps1
-    powershell -ExecutionPolicy Bypass -File .\install.ps1 -DshHome "D:\dshl"
+    powershell -ExecutionPolicy Bypass -File .\install.ps1 -DshHome "C:\Users\<你>\.dsh"
 
   做的事：
     1. 在 node_modules 下建一个目录联接（Junction）指向本插件目录，
@@ -17,7 +17,8 @@
 
 [CmdletBinding()]
 param(
-  [string]$DshHome = 'D:\dshl2',
+  # 默认取当前用户的 DSH Home（%USERPROFILE%\.dsh）。多实例（Launcher）用户请显式传 -DshHome。
+  [string]$DshHome = (Join-Path $env:USERPROFILE '.dsh'),
   [string]$Profile = 'tauri',
   [string]$PluginPath = ''
 )
@@ -120,7 +121,7 @@ $DshBinCandidates = @(
   (Join-Path $env:APPDATA 'dsh-tauri\dependencies\dsh\node_modules\@deepseek-ai\dsh\lib\bin.js'),
   (Join-Path $env:APPDATA 'io.github.baihejiangnan.dsh-launcher\dependencies\dsh\node_modules\@deepseek-ai\dsh\lib\bin.js'),
   (Join-Path $env:LOCALAPPDATA 'deepseek-harness\node_modules\@deepseek-ai\dsh\lib\bin.js'),
-  'D:\dsh\node_modules\@deepseek-ai\dsh\lib\bin.js'
+  (Join-Path $env:SystemDrive 'dsh\node_modules\@deepseek-ai\dsh\lib\bin.js')
 )
 $DshBin = $DshBinCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 if (-not $DshBin) {

@@ -403,7 +403,7 @@ CDP 僵尸通道自愈链路提速，总耗时压回客户端 20s 超时以内�
 > **旧目录里的登录态不会自动迁移** —— 想保留登录就在首次启动新窗口前手动改个名：
 >
 > ```powershell
-> Rename-Item D:\dshl\deepseek-web-profile deepseek-chat-profile
+> Rename-Item <实例Home>\deepseek-web-profile deepseek-chat-profile
 > ```
 >
 > 不改也行，代价只是在新窗口里重新登录一次 DeepSeek。

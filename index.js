@@ -549,7 +549,7 @@ function findBrowser(cfg) {
 /**
  * 专用用户数据目录 —— 登录态持久化的关键。
  *
- * 放在 DSH 实例 Home 下面（如 D:\dshl2\deepseek-web-relay-profile）：
+ * 放在 DSH 实例 Home 下面（如 <实例Home>\deepseek-web-relay-profile）：
  *   - Cookie / LocalStorage / 缓存全部落盘，重启不掉登录；
  *   - 与 DSH 自己的 WebView2 配置、以及你日常用的 Chrome profile 完全隔离；
  *   - 想「退出登录 / 重置」，删掉这个目录即可。
