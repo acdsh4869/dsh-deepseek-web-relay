@@ -1,21 +1,25 @@
 {
-  "name": "dsh-deepseek-chat",
-  "version": "1.0.0",
-  "description": "在 DSH 左侧边栏加一个原生菜单项「DeepSeek chat」：点它在独立浏览器窗口里打开 chat.deepseek.com（登录态持久化，窗口已存在时切回前台）；支持双向划词互传（DSH 划词一键传给网页端输入框 / 网页端划词浮现气泡一键接力回 DSH 输入框）。",
+  "name": "dsh-deepseek-web-relay",
+  "version": "2.0.0",
+  "description": "在 DSH 左侧边栏加一个原生菜单项「DeepSeek Relay」：点它在独立浏览器窗口里打开 chat.deepseek.com（登录态持久化，窗口已存在时切回前台）；支持双向划词互传（DSH 划词一键传给网页端输入框 / 网页端划词浮现气泡一键接力回 DSH 输入框）；网页端每条 AI 回复末尾「↪ 分支到 DSH」一键把对话上下文带进 DSH 新会话。",
+  "icon": "./icon.png",
   "keywords": [
     "dsh",
     "dsh-plugin",
     "deepseek-harness",
     "deepseek",
     "sidebar",
-    "chat"
+    "chat",
+    "relay",
+    "cdp"
   ],
   "type": "module",
   "main": "index.js",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
   },
   "files": [
     "index.js",
@@ -25,9 +29,20 @@
     "install.ps1",
     "uninstall.ps1",
     "tools",
+    "locale",
+    "icon.png",
     "README.md"
   ],
   "license": "MIT",
+  "author": "acdsh4869",
+  "homepage": "https://github.com/acdsh4869/dsh-deepseek-web-relay#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/acdsh4869/dsh-deepseek-web-relay.git"
+  },
+  "bugs": {
+    "url": "https://github.com/acdsh4869/dsh-deepseek-web-relay/issues"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"

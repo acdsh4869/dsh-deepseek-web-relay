@@ -1,12 +1,12 @@
 /**
- * dsh-deepseek-chat —— 宿主半边（Host Half）
+ * dsh-deepseek-web-relay —— 宿主半边（Host Half）
  *
  * 职责：
- *   1. 下发经校验的配置快照        GET  /dsh-deepseek-chat/config.json
- *   2. 打开 DeepSeek 网页端窗口    POST /dsh-deepseek-chat/open
- *   3. 关闭 DeepSeek 网页端窗口    POST /dsh-deepseek-chat/close
- *   4. 查询窗口当前状态            GET  /dsh-deepseek-chat/state
- *   5. 客户端自诊断落盘            POST /dsh-deepseek-chat/status
+ *   1. 下发经校验的配置快照        GET  /dsh-deepseek-web-relay/config.json
+ *   2. 打开 DeepSeek 网页端窗口    POST /dsh-deepseek-web-relay/open
+ *   3. 关闭 DeepSeek 网页端窗口    POST /dsh-deepseek-web-relay/close
+ *   4. 查询窗口当前状态            GET  /dsh-deepseek-web-relay/state
+ *   5. 客户端自诊断落盘            POST /dsh-deepseek-web-relay/status
  *
  * ────────────────────────────────────────────────────────────────────────────
  * 为什么不是 iframe（本插件最重要的设计决定）
@@ -59,7 +59,7 @@
  * 所以本插件「不碰 Tauri」：不用 iframe（不需要放宽 CSP），不用 Tauri IPC
  * （不需要 capability）。CSP 一行都不用改。
  *
- * @module dsh-deepseek-chat
+ * @module dsh-deepseek-web-relay
  */
 
 import fs from 'node:fs'
@@ -73,7 +73,7 @@ import { fileURLToPath } from 'node:url'
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)))
 
 /** 公开路由前缀。 */
-const BASE = '/dsh-deepseek-chat'
+const BASE = '/dsh-deepseek-web-relay'
 const CONFIG_PATH = `${BASE}/config.json`
 const STATUS_PATH = `${BASE}/status`
 const OPEN_PATH = `${BASE}/open`
@@ -94,8 +94,41 @@ const RELAY_ACK_PATH = `${BASE}/relay-ack`
  */
 const STATUS_FILE = path.join(
   process.env.TEMP || process.env.TMP || os.tmpdir(),
-  'dsh-deepseek-chat-status.json',
+  'dsh-deepseek-web-relay-status.json',
 )
+
+/**
+ * A→B（DSH 划词 → 网页端）注入的**独立持久日志**（最近 20 条，JSON 数组）。
+ *
+ * 🐞 2026-09-30 教训：客户端 diag 是滚动缓冲，很快被分支日志刷掉；插件日志又
+ *    进不了用户能拿到的「服务日志」。A→B 间歇性失败后想复盘，现场早已消失，
+ *    只能盲修。这份文件让每一次注入（成/败都记）都留下完整现场：
+ *    时间、字符数、CDP 状态、首试与自愈重试的结果、失败详情。
+ *    写盘失败静默忽略（诊断不能影响主流程）。
+ */
+const A2B_LOG_FILE = path.join(
+  process.env.TEMP || process.env.TMP || os.tmpdir(),
+  'dsh-deepseek-web-relay-a2b.json',
+)
+const A2B_LOG_MAX = 20
+
+/** 追加一条 A→B 注入记录（超过上限丢最旧的，保留最近 N 条）。 */
+function a2bLogAppend(entry) {
+  try {
+    let list = []
+    try {
+      list = JSON.parse(fs.readFileSync(A2B_LOG_FILE, 'utf8'))
+      if (!Array.isArray(list)) list = []
+    } catch {
+      list = []
+    }
+    list.push({ at: new Date().toISOString(), ...entry })
+    while (list.length > A2B_LOG_MAX) list.shift()
+    fs.writeFileSync(A2B_LOG_FILE, JSON.stringify(list, null, 2), 'utf8')
+  } catch {
+    /* 写盘失败不影响主流程 */
+  }
+}
 
 /** 配置默认值。每一项都有合理默认，缺失也能工作。 */
 const DEFAULTS = {
@@ -179,6 +212,65 @@ const DEFAULTS = {
   // ── A→B：DSH 划词传给 Chat ──
   /** 注入网页端输入框时加在内容前面的前缀（客户端会拼好再发过来，这里只做展示/兜底）。 */
   transferPrefix: '【来自 DSH 上下文】\n\n',
+  /**
+   * A→B 气泡触发方式（v1.6.0 改默认）：
+   *   'modifier'（**新默认**）—— 需要「按住修饰键划词」或「先划词、再按修饰键」
+   *      才冒气泡。普通划词（复制、搜索、查看）一律不打扰，这是 v1.6.0 的核心改动：
+   *      气泡从「划词即弹」变成「明确手势才弹」。
+   *   'contextmenu' —— 划词不冒，对选区**右键**时气泡才出现在光标处
+   *      （DSH 自带右键菜单照常并存）。
+   *   'select' —— 旧行为：划词松手立刻冒气泡。仍受语义区域闸门约束
+   *      （输入框/代码块/按钮/菜单/侧栏/表格里绝不冒），但普通正文里依然会打扰，
+   *      仅作为回退选项保留。
+   *   'off' —— 完全关闭气泡（快捷键直发仍可用）。
+   */
+  bubbleTrigger: 'modifier',
+  /**
+   * 'modifier' 模式下用哪个修饰键：'alt'（默认）/ 'ctrl' / 'shift' / 'meta'。
+   * ⚠️ Windows 上 Alt 可能被 DSH 壳层或系统菜单栏吃掉，因此该模式**同时**支持
+   *    「先划词、再按修饰键」这条路径 —— 单独按一下修饰键不会有任何副作用。
+   */
+  bubbleModifier: 'alt',
+  /**
+   * 'modifier' 模式下：划完词后按修饰键，气泡的「待命窗口」有多长（毫秒，默认 4000）。
+   * 超时后再按修饰键不冒泡 —— 防止很久以前的旧选区被误当成新划的词。
+   */
+  bubbleArmWindow: 4000,
+  /**
+   * 气泡无操作自动消失的时间（毫秒，默认 6000；设 0 = 不自动消失）。
+   * 需求「不遮挡关键 UI」的兜底：即便某条异常路径让气泡残留，也一定自己走。
+   */
+  bubbleAutoHideMs: 6000,
+  /**
+   * 气泡准入范围：
+   *   'input-excluded'（默认）—— 只排除**语义上明确不是正文**的区域
+   *      （输入框/搜索框/代码块/按钮/链接/菜单/弹窗/侧栏/表格/筛选标签…）。
+   *      全部使用语义稳定的标签名与 role，不引用 DSH 的构建期 class 名，升版不会失效。
+   *   'conversation' —— 更严：额外要求选区落在「看起来像对话正文」的容器里。
+   *      依赖 class 名，DSH 升版可能对不上，因此只作为可选档，不做默认。
+   */
+  bubbleScope: 'input-excluded',
+  /**
+   * A→B 快捷键直发（v1.4.0）：划词后按此组合键直接发送，**不依赖气泡点击** ——
+   * 点击链路（冒泡时机/位置/被吞）整类问题物理绕开。格式如 'ctrl+shift+s' /
+   * 'alt+s'；设为空字符串则禁用快捷键。
+   */
+  hotkeySend: 'ctrl+shift+s',
+
+  // ── 分支到 DSH 新对话（v1.1.0）：网页端每条 AI 回复末尾的按钮 ──
+  /** 网页端每条 AI 回复末尾追加的「分支」按钮文字。 */
+  branchButtonText: '↪ 分支到 DSH',
+  /**
+   * 分支抓取内容的字符上限，超出硬截断。
+   * 分支带的是整段对话上下文（比单次划词长），所以默认比 relayMaxChars（2000）宽；
+   * 写入 DSH 新会话是覆盖式、规模恒定，不会触发追加模式的累积问题。
+   */
+  branchMaxChars: 5000,
+  /**
+   * true（默认）= 分支时带上截至点击处的全部历史（User / Assistant 逐轮标注）；
+   * false = 只带被点击的那一条回复。
+   */
+  branchIncludeHistory: true,
 }
 
 /**
@@ -221,12 +313,12 @@ function normalizeConfig(raw) {
   }
 
   // 上下文接力的配置
-  for (const key of ['relay', 'relayIncludeThread']) {
+  for (const key of ['relay', 'relayIncludeThread', 'branchIncludeHistory']) {
     if (input[key] === undefined) continue
     if (typeof input[key] === 'boolean') config[key] = input[key]
     else warnings.push(`${key} 必须是布尔值，已回退默认值`)
   }
-  for (const key of ['relayButtonText', 'relayBubbleText', 'relayPrefix', 'relayBodySelector', 'transferPrefix']) {
+  for (const key of ['relayButtonText', 'relayBubbleText', 'relayPrefix', 'relayBodySelector', 'transferPrefix', 'branchButtonText']) {
     if (input[key] === undefined) continue
     if (typeof input[key] === 'string') config[key] = input[key]
     else warnings.push(`${key} 必须是字符串，已回退默认值`)
@@ -236,11 +328,63 @@ function normalizeConfig(raw) {
     if (Number.isFinite(n) && n >= 500 && n <= 200000) config.relayMaxChars = Math.round(n)
     else warnings.push('relayMaxChars 必须是 500..200000 的数字，已回退默认值')
   }
+  // 分支到 DSH 新对话：抓取内容的硬上限（v1.1.0）
+  if (input.branchMaxChars !== undefined) {
+    const n = Number(input.branchMaxChars)
+    if (Number.isFinite(n) && n >= 500 && n <= 50000) config.branchMaxChars = Math.round(n)
+    else warnings.push('branchMaxChars 必须是 500..50000 的数字，已回退默认值')
+  }
   // 接力写入模式（replace / append），非法值回退默认（replace）
   if (input.relayAppendMode !== undefined) {
     const m = String(input.relayAppendMode).toLowerCase()
     if (m === 'replace' || m === 'append') config.relayAppendMode = m
     else warnings.push("relayAppendMode 只能是 'replace' 或 'append'，已回退默认值")
+  }
+  // A→B 气泡触发方式：
+  //   'modifier'  （v1.6.0 **新默认**）—— 必须「按住修饰键划词」或「先划词再按修饰键」
+  //      才冒泡；普通划词（复制/搜索/查看）一概不打扰。
+  //   'contextmenu' —— 对选区右键时才冒泡。
+  //   'select'     —— 旧行为，划词松手就冒（仍受语义区域闸门约束，仅供回退）。
+  //   'off'        —— 完全关闭气泡（快捷键直发仍可用）。
+  if (input.bubbleTrigger !== undefined) {
+    const m = String(input.bubbleTrigger).toLowerCase()
+    if (m === 'select' || m === 'contextmenu' || m === 'modifier' || m === 'off') {
+      config.bubbleTrigger = m
+    } else {
+      warnings.push("bubbleTrigger 只能是 'modifier' / 'contextmenu' / 'select' / 'off'，已回退默认值")
+    }
+  }
+  // v1.6.0：modifier 模式用哪个修饰键（'alt'/'ctrl'/'shift'/'meta'）
+  if (input.bubbleModifier !== undefined) {
+    const m = String(input.bubbleModifier).toLowerCase()
+    const alias = m === 'control' ? 'ctrl' : m === 'cmd' || m === 'win' ? 'meta' : m
+    if (['alt', 'ctrl', 'shift', 'meta'].includes(alias)) config.bubbleModifier = alias
+    else warnings.push("bubbleModifier 只能是 'alt' / 'ctrl' / 'shift' / 'meta'，已回退默认值")
+  }
+  // v1.6.0：气泡准入范围。'input-excluded'（默认）只排除明确的非正文区；
+  // 'conversation' 额外要求选区落在「像对话正文」的容器里（更严，但依赖类名）。
+  if (input.bubbleScope !== undefined) {
+    const m = String(input.bubbleScope).toLowerCase()
+    if (m === 'input-excluded' || m === 'conversation') config.bubbleScope = m
+    else warnings.push("bubbleScope 只能是 'input-excluded' 或 'conversation'，已回退默认值")
+  }
+  // v1.6.0：modifier 模式的待命窗口（毫秒）与气泡自动消失时间（毫秒，0=不自动消失）
+  for (const [key, min, max] of [
+    ['bubbleArmWindow', 500, 60000],
+    ['bubbleAutoHideMs', 0, 600000],
+  ]) {
+    if (input[key] === undefined) continue
+    const n = Number(input[key])
+    if (Number.isFinite(n) && n >= min && n <= max) config[key] = Math.round(n)
+    else warnings.push(`${key} 必须是 ${min}..${max} 的数字，已回退默认值`)
+  }
+  // A→B 快捷键直发（v1.4.0）：空字符串=禁用，其余按字符串透传（客户端解析）
+  if (input.hotkeySend !== undefined) {
+    if (typeof input.hotkeySend === 'string' && input.hotkeySend.length <= 40) {
+      config.hotkeySend = input.hotkeySend.trim()
+    } else {
+      warnings.push('hotkeySend 必须是 40 字内的字符串，已回退默认值')
+    }
   }
   // 网页端「等回执」的上限。6000ms 会把成功误判成失败（DSH 侧是 1.5s 轮询），
   // 默认已提到 15000；这里允许 3000..120000 之间自定义。
@@ -275,11 +419,15 @@ function isLoopbackHostname(hn) {
 }
 
 /**
- * 额外信任的权威，逗号分隔（环境变量 DSHDSW_TRUSTED_HOSTS）。
+ * 额外信任的权威，逗号分隔。
+ *
+ * 主名是 DSH_RELAY_TRUSTED_HOSTS；旧的 DSHDSW_TRUSTED_HOSTS 作为兼容回退保留，
+ * 两者都有时以主名为准（用 `||` 而非合并，语义更可预期）。
+ *
  * @returns {string[]} 小写主机名列表。
  */
 function trustedAuthorities() {
-  return String(process.env.DSHDSW_TRUSTED_HOSTS || '')
+  return String(process.env.DSH_RELAY_TRUSTED_HOSTS || process.env.DSHDSW_TRUSTED_HOSTS || '')
     .split(',')
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean)
@@ -401,7 +549,7 @@ function findBrowser(cfg) {
 /**
  * 专用用户数据目录 —— 登录态持久化的关键。
  *
- * 放在 DSH 实例 Home 下面（如 D:\dshl2\deepseek-chat-profile）：
+ * 放在 DSH 实例 Home 下面（如 D:\dshl2\deepseek-web-relay-profile）：
  *   - Cookie / LocalStorage / 缓存全部落盘，重启不掉登录；
  *   - 与 DSH 自己的 WebView2 配置、以及你日常用的 Chrome profile 完全隔离；
  *   - 想「退出登录 / 重置」，删掉这个目录即可。
@@ -410,7 +558,7 @@ function findBrowser(cfg) {
  */
 function profileDir() {
   const home = process.env.DSH_HOME || path.join(os.homedir(), '.dsh')
-  return path.join(home, 'deepseek-chat-profile')
+  return path.join(home, 'deepseek-web-relay-profile')
 }
 
 // ─────────────────── 运行中检测（按命令行特征查进程） ───────────────────
@@ -753,13 +901,22 @@ async function closeWindow() {
 //   │     CDP WebSocket（宿主主动连过去）
 //   ▼
 //   ┌─ 宿主半边（本文件）：入队 + 立刻把 DSH 窗口拉到前台
-//   │     GET /dsh-deepseek-chat/relay?since=N （客户端每 1.5s 轮询）
+//   │     GET /dsh-deepseek-web-relay/relay?since=N （客户端每 1.5s 轮询）
 //   ▼
 //   └─ DSH 客户端半边 → inputActions.setDraft(前缀 + 内容)
+//
+// v1.1.0 起「分支到 DSH 新对话」（kind:'branch'）走同一条链路：
+// 区别只在客户端收到后先自动「新建会话」再写入（见 client.js 的 applyBranch）。
 
 /** 接力队列（只在内存里，最多留 20 条）。 */
 const relayQueue = []
 let relaySeq = 0
+/**
+ * 分支消息自己的序号（v1.1.0）。
+ * 队列游标仍用共享的 relaySeq（保证 /relay?since= 的轮询语义不变），
+ * branchSeq 只给分支消息编号，与划词接力的 id / 回执互不干扰。
+ */
+let branchSeq = 0
 /** 网页端「找不到回复容器」时回传的结构诊断，供定位选择器用。 */
 let relayDiag = null
 /** CDP 连接状态。 */
@@ -794,6 +951,11 @@ function buildInjectedSource(cfg) {
     // 网页端等回执的上限（ms）。必须在这里显式下发 —— 这是白名单，
     // 不写就永远不会送过去，page-script 只能吃自己的默认值。
     ackTimeoutMs: cfg.ackTimeoutMs,
+    // v1.1.0：分支到 DSH 新对话（每条 AI 回复末尾的按钮）。
+    // 同样是白名单：不下发网页端就用内置默认值。
+    branchButtonText: cfg.branchButtonText,
+    branchMaxChars: cfg.branchMaxChars,
+    branchIncludeHistory: cfg.branchIncludeHistory,
   }
   return 'window.__DSH_RELAY_CONFIG__ = ' + JSON.stringify(conf) + ';\n' + body + '\n'
 }
@@ -1012,7 +1174,16 @@ async function cdpWaitForPage(port, timeoutMs) {
   while (Date.now() < deadline) {
     const list = await cdpListTargets(port)
     if (Array.isArray(list)) {
-      const page = list.find((t) => t.type === 'page' && t.webSocketDebuggerUrl)
+      const pages = list.filter((t) => t.type === 'page' && t.webSocketDebuggerUrl)
+      // 🐞 2026-09-30 修复「有时传不过去」：不再拿第一个 page 就连 —— 用户在同一
+      //    窗口里开多张标签页（新标签页 / 别的网站）时，第一个未必是 DSC 页面，
+      //    脚本不在那、输入框也不在那，注入自然失败，且表现得「时好时坏」。
+      //    优先挑 chat.deepseek.com 的页面，其次任何 deepseek.com 域，
+      //    实在没有才退回第一个 page（保持旧行为，兼容非常规 URL）。
+      const page =
+        pages.find((t) => /chat\.deepseek\.com/i.test(String(t.url || ''))) ||
+        pages.find((t) => /deepseek\.com/i.test(String(t.url || ''))) ||
+        pages[0]
       if (page) return page
     }
     await sleep(500)
@@ -1049,7 +1220,9 @@ async function ensureCdpAttached(cfg, logger) {
   try {
     ws = new WebSocket(page.webSocketDebuggerUrl)
     await new Promise((res, rej) => {
-      const t = setTimeout(() => rej(new Error('连接超时')), 8000)
+      // 🐞 2026-10-01：8s → 4s。回环上活端口连接 <300ms；4s 只在通道真坏时
+      //    才等满 —— 自愈链路总预算必须压在客户端 20s 超时以内。
+      const t = setTimeout(() => rej(new Error('连接超时')), 4000)
       ws.addEventListener('open', () => {
         clearTimeout(t)
         res()
@@ -1113,9 +1286,14 @@ async function ensureCdpAttached(cfg, logger) {
     relayCdp.lastError = 'websocket error'
   })
 
-  await send('Runtime.enable')
-  await send('Page.enable')
-  await send('Runtime.addBinding', { name: '__dshRelay' })
+  // 🐞 2026-10-01：握手命令全部压到 1.5s —— 它们本是毫秒级操作，10s 默认上限
+  //    只会在「通道真坏了」时白拖时间。/inject 的自愈链路（首试 4s + 重连握手 +
+  //    重试 4s）一旦总耗时超过客户端 20s 超时，请求就会挂到用户侧「点了 20 秒
+  //    没反应」（09:50 超时现场：宿主卡在重连里，请求始终没有应答，
+  //    a2b 日志里连一条记录都落不下）。
+  await send('Runtime.enable', {}, 1500)
+  await send('Page.enable', {}, 1500)
+  await send('Runtime.addBinding', { name: '__dshRelay' }, 1500)
 
   let source
   try {
@@ -1128,15 +1306,15 @@ async function ensureCdpAttached(cfg, logger) {
   // 和新版的划词气泡打架）。
   if (relayCdp.scriptId) {
     try {
-      await send('Page.removeScriptToEvaluateOnNewDocument', { identifier: relayCdp.scriptId })
+      await send('Page.removeScriptToEvaluateOnNewDocument', { identifier: relayCdp.scriptId }, 1500)
     } catch (err) {
       /* 撤不掉不影响本次注入 */
     }
   }
-  const added = await send('Page.addScriptToEvaluateOnNewDocument', { source })
+  const added = await send('Page.addScriptToEvaluateOnNewDocument', { source }, 1500)
   relayCdp.scriptId = (added && added.identifier) || ''
   // 对「已经打开着」的页面也立即生效（不用刷新）
-  await send('Runtime.evaluate', { expression: source })
+  await send('Runtime.evaluate', { expression: source }, 1500)
 
   relayCdp.ws = ws
   relayCdp.connected = true
@@ -1202,7 +1380,16 @@ async function cdpEvaluate(expression, timeoutMs, cfg, logger) {
     if (!r) return { ok: false, detail: 'CDP 无响应' }
     if (r.__timeout) return { ok: false, detail: 'CDP 调用超时', __timeout: true }
     if (r.exceptionDetails) {
-      return { ok: false, detail: '网页端脚本抛错: ' + String(r.exceptionDetails.text || '') }
+      // ⚠️ exceptionDetails.text 通常只有 "Uncaught" 一个词，完整信息在
+      //    exception.description 里（如 "TypeError: xxx is not a function"）。
+      //    只取 text 会让诊断日志变成哑谜（13:50 实测：网页端脚本抛错: Uncaught，
+      //    真实错误被吞掉）。两级取值 + 截断，把真相带回来。
+      const ed = r.exceptionDetails
+      const desc =
+        (ed.exception && (ed.exception.description || ed.exception.className)) ||
+        ed.text ||
+        '(未知异常)'
+      return { ok: false, detail: '网页端脚本抛错: ' + String(desc).slice(0, 300) }
     }
     return { ok: true, value: r.result ? r.result.value : undefined }
   }
@@ -1275,6 +1462,30 @@ function onBindingCalled(params, logger) {
     focusDshWindow(dshInstanceName()).then((r) =>
       logger?.info?.(`[${name}] 聚焦 DSH 窗口: ${r.ok ? '成功' : r.detail}`),
     )
+  } else if (msg.kind === 'branch') {
+    // 网页端「↪ 分支到 DSH」：整段对话上下文 → DSH 自动新建会话并填入（v1.1.0）。
+    // 与划词接力共用 relayQueue 与轮询通道，但带独立 branchSeq 与 isBranch 标记，
+    // 客户端据此走 applyBranch（新建会话自动化），互不干扰。
+    relaySeq++
+    branchSeq++
+    relayQueue.push({
+      seq: relaySeq, // 共享游标：/relay?since= 的过滤语义保持不变
+      kind: 'branch',
+      isBranch: true,
+      branchSeq, // 分支自己的序号
+      id: msg.id,
+      text: typeof msg.text === 'string' ? msg.text : String(msg.text || ''),
+      meta: msg.meta || {},
+    })
+    while (relayQueue.length > 20) relayQueue.shift()
+    logger?.info?.(
+      `[${name}] 收到分支请求 ${String(msg.text || '').length} 字符` +
+        `（${msg.meta && msg.meta.includeHistory ? '全量历史' : '仅末条回复'}，branchSeq ${branchSeq}）`,
+    )
+    // 接下来的自动化发生在 DSH 里：和划词接力一样，先把 DSH 拉到前台
+    focusDshWindow(dshInstanceName()).then((r) =>
+      logger?.info?.(`[${name}] 聚焦 DSH 窗口: ${r.ok ? '成功' : r.detail}`),
+    )
   } else if (msg.kind === 'copy') {
     // 网页端注入失败时的兜底：请宿主机把内容写进**系统剪贴板**
     // （比浏览器侧的 execCommand / clipboard API 可靠，不受权限限制）
@@ -1312,14 +1523,14 @@ function onBindingCalled(params, logger) {
 
 // ───────────────────────────────── 插件主体 ─────────────────────────────────
 
-export const name = 'dsh-deepseek-chat'
+export const name = 'dsh-deepseek-web-relay'
 export const inject = ['webServer']
 
 /**
  * 插件主体。
  *
  * 整个函数体被 try/catch 包住：宿主半边**绝不允许**因为自身异常而影响 DSH 启动。
- * 最坏情况是这个插件静默失效（侧边栏没有 DeepSeek chat 菜单项），DSH 本体照常运行。
+ * 最坏情况是这个插件静默失效（侧边栏没有 DeepSeek Relay 菜单项），DSH 本体照常运行。
  *
  * @param {any} ctx Cordis 上下文。
  * @param {unknown} rawConfig 用户配置（来自 cordis 行）。
@@ -1579,19 +1790,63 @@ export function apply(ctx, rawConfig) {
       const payload = (await readJson(req)) || {}
       const text = String(payload.text || '')
       if (!text.trim()) {
+        a2bLogAppend({ chars: 0, ok: false, reason: 'empty' })
         sendJson(res, 400, { ok: false, reason: 'empty', detail: '没有内容可发送' })
         return
       }
+      // A→B 全链路诊断第 1 步：宿主已收到请求（后续各步都跟随这条日志）
+      ctx.logger?.info?.(`[${name}] A→B 注入请求：${text.length} 字符`)
+      // 📋 持久日志的现场记录（首试 / 自愈 / 终态各步骤都往这里塞）
+      const a2b = { chars: text.length }
 
-      // 1) 窗口得开着 —— 绝不在后台偷偷开新窗口（需求明确要求）
-      const st = await isWindowOpen(config)
+      // 1) 窗口得开着 —— 没开就**自动打开再注入**（v1.2.2 行为变更）。
+      //    旧行为是 409 让用户手动去侧边栏开窗（早期需求），但用户实测痛点正是
+      //    「第一次点气泡只报错没开窗；手动开完窗，原来的气泡早没了，还得重新
+      //    划词重点」——观感就是「要重复点好几遍」。现在：点一下气泡 =
+      //    自动开窗 + 注入，全链路一次完成；自动开窗失败才回退报错。
+      let st = await isWindowOpen(config)
       if (!st.open) {
-        sendJson(res, 409, {
-          ok: false,
-          reason: 'no-window',
-          detail: 'DeepSeek chat 窗口没开着。先在侧边栏菜单里点一下 DeepSeek chat 打开它，再划词发送。',
-        })
-        return
+        ctx.logger?.info?.(`[${name}] A→B 注入时窗口未开，自动打开…`)
+        a2b.autoOpen = true
+        try {
+          const debugPort = config.relay ? await pickFreePort() : 0
+          // 没有前端传来的宿主窗口矩形 → computeGeometry 返回 null → 系统默认位置
+          const geometry = computeGeometry(undefined, config)
+          const result = launchWindow(config, geometry, debugPort)
+          if (!result.ok) {
+            a2bLogAppend({
+              ...a2b,
+              ok: false,
+              reason: 'no-window',
+              windowDetail: String(result.detail || 'launchWindow 失败'),
+            })
+            sendJson(res, 409, {
+              ok: false,
+              reason: 'no-window',
+              detail: 'DeepSeek Relay 窗口打不开：' + (result.detail || '未知原因'),
+            })
+            return
+          }
+          lastLaunchAt = Date.now()
+          relayCdp.port = result.debugPort || 0
+        } catch (e) {
+          const why = String((e && e.message) || e)
+          a2bLogAppend({ ...a2b, ok: false, reason: 'no-window', windowDetail: why })
+          sendJson(res, 409, { ok: false, reason: 'no-window', detail: 'DeepSeek Relay 窗口打不开：' + why })
+          return
+        }
+        // 冷启动：等进程起来再复查（页面就绪由后面 ensureCdpAttached 的等待兜住）
+        await sleep(2500)
+        st = await isWindowOpen(config)
+        if (!st.open) {
+          a2bLogAppend({ ...a2b, ok: false, reason: 'no-window', windowDetail: '自动开窗后仍未检测到进程' })
+          sendJson(res, 409, {
+            ok: false,
+            reason: 'no-window',
+            detail: '窗口正在启动但还没就绪，请稍候 2-3 秒再点一次气泡即可。',
+          })
+          return
+        }
       }
 
       // 2) 窗口开着，但我可能**不知道调试端口**（宿主重启过、窗口是上一个实例开的，
@@ -1603,41 +1858,100 @@ export function apply(ctx, rawConfig) {
           const found = await findDebugPortInCmdline()
           if (found) {
             relayCdp.port = found
+            a2b.portRescued = found
             ctx.logger?.info?.(`[${name}] 注入前自救：从命令行找回调试端口 ${found}`)
           }
         }
       }
+      a2b.cdpPort = relayCdp.port || 0
 
       // 3) 确保 CDP 连着、脚本注入了
+      //    ⚠️ CDP 未连接 / 连接失败时把详情原样带回客户端（detail 字段），
+      //       绝不让请求悬空 —— 客户端拿不到 detail 就只能显示「未知原因」。
       let detail = ''
       let how = ''
       let injected = false
       const attached = await ensureCdpAttached(config, ctx.logger)
+      a2b.attached = attached.ok === true
       if (!attached.ok) {
         detail = attached.detail
+        a2b.attachDetail = String(detail || '')
+        ctx.logger?.warn?.(`[${name}] A→B CDP 通道不可用：${detail}`)
       } else {
-        // 4) 调页面里的注入函数
+        // 4) 调页面里的注入函数。首试只等 4 秒（2026-10-01 从 5s 收紧）：
+        //    给下面的自愈重试留足预算 —— 客户端整条请求的超时是 20 秒，
+        //    自愈链路（重连握手 1.5s/命令 + 重试 4s）必须稳稳落在预算内，
+        //    否则就是「点了 20 秒没反应」。
         const expr =
           'window.__dshInjectText ? window.__dshInjectText(' +
           JSON.stringify(text) +
           ') : ({ ok:false, detail:"网页端脚本没注入（窗口可能是升级前打开的，关掉重开即可）" })'
-        const r = await cdpEvaluate(expr, undefined, config, ctx.logger)
+        let r = await cdpEvaluate(expr, 4000, config, ctx.logger)
+        // 📋 首试现场（无论成败都记 —— 复盘间歇性失败的关键证据）
+        a2b.first = {
+          ok: r.ok === true,
+          valueOk: Boolean(r.value && r.value.ok),
+          detail: String((r.value && r.value.detail) || r.detail || '').slice(0, 200),
+        }
+        // 🩹 自愈重试（「有时传不过去」的修法）：明确没写进去（脚本不在页面上 /
+        //    没找到输入框 / CDP 层面失败）时，多半是暂态 —— 页面刚刷新的窗口期、
+        //    宿主重启后连接挑错了页面、脚本没跟上。强制重连一次 CDP：
+        //    重连过程会重新挑页面（优先 chat.deepseek.com）并把脚本补注到
+        //    已开着的页面上，然后再试一次。
+        //    ⚠️ 只在「明确没写进去」时救 —— 超时场景内容可能其实已经进去了，
+        //    盲目重试会追加成两份。
+        const firstDetail = String((r.value && r.value.detail) || r.detail || '')
+        const clearlyNotWritten =
+          (r.value && r.value.ok === false && /没注入|没找到/.test(firstDetail)) ||
+          (!r.ok && !/超时/.test(firstDetail))
+        if (clearlyNotWritten) {
+          a2b.rescued = true
+          ctx.logger?.info?.(
+            `[${name}] A→B 自愈：首次未写入（${firstDetail || '未知'}），强制重连 CDP（重挑页面 + 补脚本）后重试一次`,
+          )
+          forceCdpDisconnect('A→B 注入自愈重试')
+          const re = await ensureCdpAttached(config, ctx.logger)
+          a2b.reconnectOk = re.ok === true
+          if (re.ok) {
+            r = await cdpEvaluate(expr, 4000, config, ctx.logger)
+            a2b.retry = {
+              ok: r.ok === true,
+              valueOk: Boolean(r.value && r.value.ok),
+              detail: String((r.value && r.value.detail) || r.detail || '').slice(0, 200),
+            }
+          } else {
+            r = { ok: false, detail: '自愈重连失败: ' + re.detail }
+            a2b.retry = { ok: false, detail: String(re.detail || '').slice(0, 200) }
+          }
+        }
         if (!r.ok) {
           detail = r.detail
+          ctx.logger?.warn?.(`[${name}] A→B 调用 __dshInjectText 失败：${detail}`)
         } else if (r.value && r.value.ok) {
           injected = true
           how = r.value.how || 'unknown'
           detail = r.value.detail || '已填入输入框'
         } else {
           detail = (r.value && r.value.detail) || '网页端拒绝注入'
+          ctx.logger?.warn?.(`[${name}] A→B 网页端注入未成功：${detail}`)
         }
       }
 
-      // 4) 不管成没成，都把网页端窗口拉到前台 —— 用户要能看见结果
+      // 4) 不管成没成，都把网页端窗口拉到前台 —— 用户要能看见结果。
+      //    v1.3.0：先对**实际注入的那一页**做 Page.bringToFront（精确到窗口），
+      //    再退而求其次按 PID 聚焦进程 —— 以前只按 PID 聚焦，profile 里若堆了
+      //    多个 chat 窗口，被推到前台的未必是收到内容的那个，用户盯着空输入框
+      //    以为「点了好几下都没反应」。
+      try {
+        if (injected && relayCdp.send) await relayCdp.send('Page.bringToFront', {}, 1500)
+      } catch (err) {
+        /* 拉前台失败不阻断主流程，下面还有 PID 聚焦兜底 */
+      }
       const focused = await focusDeepSeekWindow()
 
       if (injected) {
         ctx.logger?.info?.(`[${name}] A→B 注入成功（${how}）`)
+        a2bLogAppend({ ...a2b, ok: true, how })
         sendJson(res, 200, {
           ok: true,
           how,
@@ -1651,6 +1965,7 @@ export function apply(ctx, rawConfig) {
       // 5) 兜底：写进系统剪贴板，让用户手动粘贴
       const copied = await copyToClipboard(text)
       ctx.logger?.warn?.(`[${name}] A→B 注入失败（${detail}），已复制到剪贴板: ${copied}`)
+      a2bLogAppend({ ...a2b, ok: false, copied, detail: String(detail || '').slice(0, 300) })
       sendJson(res, 200, {
         ok: false,
         reason: 'inject-failed',

@@ -1,5 +1,5 @@
 # ============================================================================
-# dsh-deepseek-chat —— DSH bundle patch
+# dsh-deepseek-web-relay —— DSH bundle patch
 # ============================================================================
 # 这一行是「插件被 DSH 加载」的唯一开关。删掉这一行（或整行注释掉）并重启，
 # 插件就彻底不加载了 —— 这就是紧急禁用手段之一，详见 README 第七节。
@@ -12,5 +12,5 @@
 # 必须是「顶层 YAML 数组」。写成 mapping 会在启动时直接抛错，不是静默跳过。
 
 - insert:
-    - id: dsh-deepseek-chat
-      name: dsh-deepseek-chat
+    - id: dsh-deepseek-web-relay
+      name: dsh-deepseek-web-relay

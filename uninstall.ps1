@@ -1,5 +1,5 @@
 ﻿<#
-  dsh-deepseek-chat —— 卸载 / 紧急禁用脚本（幂等）
+  dsh-deepseek-web-relay —— 卸载 / 紧急禁用脚本（幂等）
 
   用法（cd 到插件目录后）：
     powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
@@ -20,7 +20,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$PackageName = 'dsh-deepseek-chat'
+$PackageName = 'dsh-deepseek-web-relay'
 
 # $PSScriptRoot 在 param() 默认值里不一定已赋值，这里兜底推导。
 if (-not $PluginPath) { $PluginPath = Split-Path -Parent $MyInvocation.MyCommand.Path }

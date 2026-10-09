@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "DeepSeek Relay",
+    "description": "Adds a native DSH sidebar item that opens chat.deepseek.com in a standalone window with persistent login, relays text selections both ways between DSH and the web page via CDP, and branches a web conversation into a new DSH session."
+  }
+}

@@ -1,4 +1,4 @@
-# dsh-deepseek-chat 技术文档
+# dsh-deepseek-web-relay 技术文档
 
 面向想了解实现细节、需要完整配置或使用脚本安装/卸载的用户。
 日常使用看 [README](../README.md) 即可。
@@ -18,15 +18,15 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -DshHome <DSH 实例 Home
 脚本会建立 `node_modules` 目录联接、把包名登记进 `dsh.profile.bundles`、备份原 `package.json`，并跑一次自检。
 脚本是**幂等**的，重复执行安全。
 
-安装成功的标志：自检输出 `[OK] dump-config 里已出现 dsh-deepseek-chat —— 插件会被加载`。
+安装成功的标志：自检输出 `[OK] dump-config 里已出现 dsh-deepseek-web-relay —— 插件会被加载`。
 
 ### 验证安装
 
 ```powershell
-Get-Content "$env:TEMP\dsh-deepseek-chat-status.json"
+Get-Content "$env:TEMP\dsh-deepseek-web-relay-status.json"
 ```
 
-`registered` 数组应包含 `sidebar.panellist#dsh-deepseek-chat-panel`。
+`registered` 数组应包含 `sidebar.panellist#dsh-deepseek-web-relay-panel`。
 
 ### 卸载
 
@@ -41,8 +41,8 @@ powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -DshHome <DSH 实例 Ho
 
 ```yaml
 # - insert:
-#     - id: dsh-deepseek-chat
-#       name: dsh-deepseek-chat
+#     - id: dsh-deepseek-web-relay
+#       name: dsh-deepseek-web-relay
 ```
 
 ---
@@ -53,8 +53,8 @@ powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -DshHome <DSH 实例 Ho
 
 ```yaml
 - insert:
-    - id: dsh-deepseek-chat
-      name: dsh-deepseek-chat
+    - id: dsh-deepseek-web-relay
+      name: dsh-deepseek-web-relay
       config:
         placement: over-dsh
 ```
@@ -74,6 +74,25 @@ powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -DshHome <DSH 实例 Ho
 | `draftMaxChars` | number | `6000` | 输入框草稿总长上限，仅 `append` 模式生效 |
 | `ackTimeoutMs` | number | `15000` | 网页端等待 DSH 回执的上限（毫秒） |
 | `transferPrefix` | string | `【来自 DSH 上下文】` | A → B 注入时的前缀，留空则不加 |
+| `branchButtonText` | string | `"↪ 分支到 DSH"` | 网页端每条 AI 回复末尾的分支按钮文字 |
+| `branchMaxChars` | number | `5000` | 分支抓取内容的字符上限，超出硬截断（合法范围 500..50000） |
+| `branchIncludeHistory` | boolean | `true` | `true` 带截至点击处的全部历史；`false` 只带被点击的那条回复 |
+
+### 划词气泡（v1.6.0 新增配置）
+
+气泡在 DSH 里划词后浮现「🐋 传给Chat」。v1.6.0 起默认不再「划词即弹」，
+普通划词（复制、搜索、查看）一概不打扰，需明确的传送手势才弹出。
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `bubbleTrigger` | `modifier` \| `contextmenu` \| `select` \| `off` | `modifier` | `modifier`=按住修饰键划词或先划词再按修饰键；`contextmenu`=对选区右键；`select`=旧行为划词即弹（仍受区域闸门约束）；`off`=关闭气泡 |
+| `bubbleModifier` | `alt` \| `ctrl` \| `shift` \| `meta` | `alt` | `modifier` 模式下用哪个修饰键 |
+| `bubbleArmWindow` | number | `4000` | 「先划词再按修饰键」的待命窗口（毫秒），超时后按修饰键不弹 |
+| `bubbleAutoHideMs` | number | `6000` | 气泡无操作自动消失时间（毫秒），`0` = 不自动消失 |
+| `bubbleScope` | `input-excluded` \| `conversation` | `input-excluded` | 准入范围。默认只排除语义上明确不是正文的区域（输入框/搜索框/代码块/按钮/菜单/侧栏/表格/筛选标签…）；`conversation` 更严，额外要求选区落在「像对话正文」的容器里 |
+
+配合 `hotkeySend`（默认 `ctrl+shift+s`）使用最省心：划完词按快捷键直接发送，
+完全不经过气泡的指针链路，也就不存在气泡遮挡界面的问题。
 
 `relayPrefix` 默认值：`【来自 DeepSeek 网页端上下文，请基于此继续完成后续任务】`
 
@@ -101,7 +120,7 @@ powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 -DshHome <DSH 实例 Ho
 
 | slot | 作用域 | 用途 |
 |---|---|---|
-| `sidebar.panellist` | 列表 | 左侧边栏菜单项 **DeepSeek chat** |
+| `sidebar.panellist` | 列表 | 左侧边栏菜单项 **DeepSeek Relay** |
 | `shell.overlay` | root | 划词气泡（无会话时也可用） |
 | `conversation.session.header.utilities` | session | 接力桥，负责把内容写入 DSH 输入框 |
 
@@ -119,7 +138,7 @@ chat.deepseek.com 页面中的 page-script.js
    │  CDP WebSocket（宿主主动连接）
    ▼
 宿主半边 index.js：入队 + 将 DSH 窗口置于前台
-   │  GET /dsh-deepseek-chat/relay?since=N（客户端轮询，间隔 800ms）
+   │  GET /dsh-deepseek-web-relay/relay?since=N（客户端轮询，间隔 800ms）
    ▼
 客户端半边 client.js → inputActions.setDraft(前缀 + 内容)
 ```
@@ -128,7 +147,7 @@ chat.deepseek.com 页面中的 page-script.js
 
 ```
 DSH 划词气泡（client.js）
-   │  POST /dsh-deepseek-chat/inject { text }
+   │  POST /dsh-deepseek-web-relay/inject { text }
    ▼
 宿主半边 index.js → CDP Runtime.evaluate
    ▼
@@ -136,6 +155,31 @@ page-script.js 的 window.__dshInjectText(text) → 写入网页端输入框
    │
    └─ 失败时兜底：写入系统剪贴板并提示手动粘贴
 ```
+
+### 分支到 DSH 新对话（v1.1.0）
+
+网页端每条 AI 回复末尾有「↪ 分支到 DSH」按钮，链路与 B→A 接力共用一条通道：
+
+```
+page-script.js（按钮点击，抓 User/Assistant 逐轮上下文）
+   │  window.__dshRelay({ kind:'branch', id, text, meta })   ← CDP binding
+   ▼
+宿主半边 index.js：入 relayQueue（isBranch:true，独立 branchSeq）
+   │  GET /dsh-deepseek-web-relay/relay?since=N（客户端轮询）
+   ▼
+客户端半边 client.js → applyBranch：
+   ① 缓存到 window.__dshPendingBranch
+   ② 模拟点击 DSH「新建会话」按钮（[aria-label="新建会话"] 优先，多套备选，≤5 次 × 500ms）
+   ③ 轮询等新会话挂载（≤15 次 × 500ms）：sessionInput.setDraft 可用
+      且（输入框换了新节点 / 已等 3s）
+   ④ sessionInput.setDraft(text) —— replace 覆盖写入，绝不追加
+   ⑤ 失败兜底：内容写剪贴板 + 提示手动粘贴；结果经 /relay-ack 回执网页端按钮
+```
+
+- 队列游标仍是共享的 `relaySeq`（`/relay?since=` 语义不变）；`branchSeq` 只给分支消息编号。
+- 按钮注入与上下文抓取全部 try/catch + 多套备选选择器：站点改版最坏只是按钮消失。
+- 角色识别（User / Assistant）按选择器优先级 + 交替启发逐级降级，属于尽力而为 ——
+  站点改版后最坏情况是上下文只含 AI 回复、缺用户提问标注，不影响内容送达。
 
 **写入 DSH 输入框走的是官方 API 而非修改 DOM。** DSH 输入框为 Lexical 富文本编辑器，
 直接修改 DOM 会被下一次渲染覆盖；插件通过 session 作用域 slot 提供的
@@ -157,11 +201,11 @@ page-script.js 的 window.__dshInjectText(text) → 写入网页端输入框
 
 | 接口 | 方法 | 用途 |
 |---|---|---|
-| `/dsh-deepseek-chat/open` | POST | 打开或唤起 DeepSeek 窗口 |
-| `/dsh-deepseek-chat/state` | GET | 查询窗口状态（`via`：`cdp-port` / `process-scan` / `none`） |
-| `/dsh-deepseek-chat/inject` | POST | A → B 注入文本 |
-| `/dsh-deepseek-chat/relay` | GET | B → A 轮询队列 |
-| `/dsh-deepseek-chat/reattach` | POST | 尝试重新找回调试端口 |
+| `/dsh-deepseek-web-relay/open` | POST | 打开或唤起 DeepSeek 窗口 |
+| `/dsh-deepseek-web-relay/state` | GET | 查询窗口状态（`via`：`cdp-port` / `process-scan` / `none`） |
+| `/dsh-deepseek-web-relay/inject` | POST | A → B 注入文本 |
+| `/dsh-deepseek-web-relay/relay` | GET | B → A 轮询队列 |
+| `/dsh-deepseek-web-relay/reattach` | POST | 尝试重新找回调试端口 |
 
 ### 安全边界
 
@@ -211,13 +255,13 @@ DSH 输入框是 Lexical 富文本编辑器，官方的 `setDraft` 接口会**�
 
 ## 登录态与账号重置
 
-- 登录态存放于 `<DSH 实例 Home 目录>\deepseek-chat-profile\`，是一个完整的 Chromium 用户数据目录。
+- 登录态存放于 `<DSH 实例 Home 目录>\deepseek-web-relay-profile\`，是一个完整的 Chromium 用户数据目录。
 - 该目录与 DSH 自身的 WebView2 目录、以及日常使用的 Chrome profile **完全隔离**，互不影响。
   该窗口不会携带日常 Chrome 的书签、扩展与登录状态。
 - **更换 DeepSeek 账号**：关闭窗口 → 删除该目录 → 再次点击菜单项。
 
   ```powershell
-  Remove-Item -LiteralPath <DSH 实例 Home 目录>\deepseek-chat-profile -Recurse -Force
+  Remove-Item -LiteralPath <DSH 实例 Home 目录>\deepseek-web-relay-profile -Recurse -Force
   ```
 
 ---
@@ -234,8 +278,11 @@ DSH 输入框是 Lexical 富文本编辑器，官方的 `setDraft` 接口会**�
 6. **Markdown 为尽力还原。** 代码块、列表、标题、加粗、链接可保留；表格与复杂嵌套会退化为纯文本。
 7. **同一实例不要同时运行两个进程。** 插件按 profile 的 Chrome 进程识别窗口，
    两个进程会争抢同一个窗口，表现为「窗口开着却报没有调试端口」。
-8. **自检文件为全机器共用**（`%TEMP%\dsh-deepseek-chat-status.json`），多实例会互相覆盖，
+8. **自检文件为全机器共用**（`%TEMP%\dsh-deepseek-web-relay-status.json`），多实例会互相覆盖，
    不能用于区分实例。
+9. **分支按钮依赖 DOM 选择器。** 按钮注入与 User/Assistant 角色识别用多套备选选择器
+   逐级降级；站点改版后最坏情况是按钮消失、或上下文缺用户提问的角色标注，
+   不影响页面本身与其他功能（失败时内容走剪贴板兜底）。
 
 ---
 

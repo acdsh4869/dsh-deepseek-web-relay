@@ -1,5 +1,5 @@
-﻿<#
-  dsh-deepseek-chat —— 安装脚本（幂等，可反复运行）
+<#
+  dsh-deepseek-web-relay —— 安装脚本（幂等，可反复运行）
 
   用法（在 PowerShell 里，cd 到插件目录后）：
     powershell -ExecutionPolicy Bypass -File .\install.ps1
@@ -8,7 +8,7 @@
   做的事：
     1. 在 node_modules 下建一个目录联接（Junction）指向本插件目录，
        这样 DSH 才能 require 到它；
-    2. 把 "dsh-deepseek-chat" 加进 profile 的 package.json -> dsh.profile.bundles；
+    2. 把 "dsh-deepseek-web-relay" 加进 profile 的 package.json -> dsh.profile.bundles；
     3. 备份 package.json（带时间戳），改坏了可以还原；
     4. 跑一次 --dump-config 自检，确认插件真的会被加载。
 
@@ -23,7 +23,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$PackageName = 'dsh-deepseek-chat'
+$PackageName = 'dsh-deepseek-web-relay'
 
 # $PSScriptRoot 在 param() 默认值里不一定已赋值，这里兜底推导。
 if (-not $PluginPath) { $PluginPath = Split-Path -Parent $MyInvocation.MyCommand.Path }
@@ -115,14 +115,18 @@ Info "    当前 bundles: $($out[1])"
 # ── 5. 启动前自检 --dump-config ─────────────────────────────────────────
 Info ""
 Info "=== 启动前自检（--dump-config）==="
-$DshBin = Join-Path $env:APPDATA 'io.github.baihejiangnan.dsh-launcher\dependencies\dsh\node_modules\@deepseek-ai\dsh\lib\bin.js'
-if (-not (Test-Path -LiteralPath $DshBin)) {
-  $cand = @('D:\dsh\node_modules\@deepseek-ai\dsh\lib\bin.js')
-  $DshBin = $cand | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-}
+# 按「本机最可能出现 -> 越往后越兜底」的顺序找 dsh 的 bin.js。
+$DshBinCandidates = @(
+  (Join-Path $env:APPDATA 'dsh-tauri\dependencies\dsh\node_modules\@deepseek-ai\dsh\lib\bin.js'),
+  (Join-Path $env:APPDATA 'io.github.baihejiangnan.dsh-launcher\dependencies\dsh\node_modules\@deepseek-ai\dsh\lib\bin.js'),
+  (Join-Path $env:LOCALAPPDATA 'deepseek-harness\node_modules\@deepseek-ai\dsh\lib\bin.js'),
+  'D:\dsh\node_modules\@deepseek-ai\dsh\lib\bin.js'
+)
+$DshBin = $DshBinCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 if (-not $DshBin) {
   Warn "找不到 dsh 的 bin.js，跳过自检"
 } else {
+  Ok "使用 dsh：$DshBin"
   $env:DSH_HOME = $DshHome
   $cfg = (& node $DshBin --profile $Profile --dump-config 2>&1) -join "`n"
   if ($cfg -match [regex]::Escape($PackageName)) {

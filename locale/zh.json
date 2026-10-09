@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "DeepSeek Relay",
+    "description": "在 DSH 左侧边栏添加原生菜单项，一键打开 chat.deepseek.com 独立窗口（登录态持久化、窗口已开则切回前台）；基于 CDP 实现 DSH 与网页端双向划词互传，并支持把网页端对话上下文一键分支到 DSH 新会话。"
+  }
+}
