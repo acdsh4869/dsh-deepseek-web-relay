@@ -58,12 +58,12 @@ window.__ModuleLoader__.load({
     const MODE_WEB = 'deepseek'
 
     /**
-     * 修复标记：事件隔离补丁（v1.4.1）。
+     * 修复标记：事件隔离补丁（v1.4.0）。
      * 每次切换模式都会随诊断一起上报，落在 %TEMP%\dsh-deepseek-web-relay-status.json。
      * 有了它就能一眼确认"浏览器里跑的是不是修复版"，不用开 DevTools
      * （桌面壳 WebView2 默认没有 F12）。
      */
-    const GUARD_ID = 'event-isolation-v1.4.1'
+    const GUARD_ID = 'event-isolation-v1.4.0'
 
     // ─────────────────────────── 自诊断上报 ───────────────────────────
     // 桌面壳（WebView2）默认不开 F12，浏览器 devtools 用不了；而 slot 注册发生在
@@ -904,9 +904,9 @@ html.dsh-deepseek-dark .dsw-toast[data-err="1"]{border-color:#f0a13e;color:#fbbf
     let lastMissReportAt = 0
 
     /**
-     * 读选区文本（含 Shadow DOM 兜底，v1.2.1）。
+     * 读选区文本（含 Shadow DOM 兜底，v1.2.0）。
      * 🐞 DSH 0.20.0 部分渲染区域在 ShadowRoot 里：那种选区对 window.getSelection()
-     *    表现为 collapsed、toString() 为空 —— v1.1.2 的 selectionchange 缓存
+     *    表现为 collapsed、toString() 为空 —— v1.2.0 的 selectionchange 缓存
      *    跟着失灵，留下「偶发 collapsed 失败」的漏网（10-31 现场：一次成功
      *    注入后 4 秒，同样的划法只报 collapsed）。Chrome/Edge ≥134 的
      *    getComposedRanges() 能穿透 shadow 边界拿到真实 range，这里做兜底。
@@ -954,7 +954,7 @@ html.dsh-deepseek-dark .dsw-toast[data-err="1"]{border-color:#f0a13e;color:#fbbf
     // ─────────────── v1.6.0：划词准入判定（气泡只在对的地方冒）───────────────
     //
     // 🐞 为什么不能靠「排除插件市场/设置」这种方式写死路径：
-    //    DSH 是 React 应用，class 名基本是构建期生成的（v1.2.1 踩过的坑：
+    //    DSH 是 React 应用，class 名基本是构建期生成的（v1.2.0 踩过的坑：
     //    部分渲染区在 ShadowRoot 里），插件市场这种页面的类名会随版本变。
     //    所以这里的策略是**按语义排除**，而不是按路径排除 ——
     //    只认「这个选区落在什么性质的控件里」，不认「它在第几层路由」。
@@ -1241,7 +1241,7 @@ html.dsh-deepseek-dark .dsw-toast[data-err="1"]{border-color:#f0a13e;color:#fbbf
     /**
      * 把选区文本发给 Chat 网页端输入框。
      * @param {string} text 选中的文本。
-     * @param {string} [source] 触发来源（v1.4.1 埋点用）：'bubble' / 'hotkey'。
+     * @param {string} [source] 触发来源（v1.4.0 埋点用）：'bubble' / 'hotkey'。
      *   旧日志写死「气泡点击」，快捷键发送也被记成气泡点击，排查时严重误导 —— 现已区分。
      */
     async function sendSelectionToChat(text, source) {
@@ -1269,7 +1269,7 @@ html.dsh-deepseek-dark .dsw-toast[data-err="1"]{border-color:#f0a13e;color:#fbbf
         })
 
         if (r && r.ok) {
-          // v1.3.0：成功提示带内容预览 —— 让用户能把「这次传送」和输入框里的文本对上号
+          // v1.4.0：成功提示带内容预览 —— 让用户能把「这次传送」和输入框里的文本对上号
           const preview = body.length > 14 ? body.slice(0, 14) + '…' : body
           showToast(
             '已填入 DeepSeek Relay（' +
@@ -1438,11 +1438,11 @@ html.dsh-deepseek-dark .dsw-toast[data-err="1"]{border-color:#f0a13e;color:#fbbf
           //    旧代码在 fire 里**同步**摘掉气泡 —— 同一手势的 mouseup 派发时
           //    气泡已不在 DOM，target 守卫失效，残留选区把气泡原样冒回来。
           //    现方案：发送期间气泡变成「正在发送…」留在 DOM（让同一手势的
-          //    mouseup 仍被守卫忽略），发送后按**成败**分态（v1.2.2）：
+          //    mouseup 仍被守卫忽略），发送后按**成败**分态（v1.3.0）：
           //      成功 → 「✓ 已发送」500ms 后消失（并作废选区缓存）；
           //      失败 → 「✗ 失败，点击重试」**留在原地**，解除禁用并重置防重
           //               标记 —— 用户直接再点同一个小气泡即可重试。
-          //    （v1.2.2 前的缺陷：失败也走「✓ 已发送 → 消失 + 清缓存 + 抑制窗」，
+          //    （v1.3.0 前的缺陷：失败也走「✓ 已发送 → 消失 + 清缓存 + 抑制窗」，
           //    失败后紧跟着的点击全被吞掉，现场＝「点好几下都没反应、
           //    日志里只有一次 a2b-click」。）
           try {
@@ -1532,7 +1532,7 @@ html.dsh-deepseek-dark .dsw-toast[data-err="1"]{border-color:#f0a13e;color:#fbbf
         } catch (err) {
           /* 定时器起不来不影响气泡本身 */
         }
-        // v1.4.1 遮挡自检：气泡出现后 0.4s / 1.5s 各查一次「气泡中心点最顶层的元素
+        // v1.4.0 遮挡自检：气泡出现后 0.4s / 1.5s 各查一次「气泡中心点最顶层的元素
         // 是不是气泡自己」。DSH 0.20.0 壳层若有一层透明遮罩压在气泡上方，点击会
         // 全被遮罩吃掉（视觉对准了也点不中）—— 这个检查能把遮罩的身份（标签/
         // class/z-index）直接写进日志，不用再猜。
@@ -1687,7 +1687,7 @@ html.dsh-deepseek-dark .dsw-toast[data-err="1"]{border-color:#f0a13e;color:#fbbf
                   //    readSelection 之所以返回 null 有两种原因：「压根没有合格选区」
                   //    （该拦）和「选区被 React 重渲染塌缩、但缓存里是对的」（该放）。
                   //    用下面的 zone 复查把这两者区分开：前者区域不合格 → 不冒；
-                  //    后者区域仍合格 → 放行缓存。既守住闸门，又不破坏 v1.1.2 的稳定性修复。
+                  //    后者区域仍合格 → 放行缓存。既守住闸门，又不破坏 v1.2.0 的稳定性修复。
                   selectionZoneAllowed()
                 ) {
                   text = selCache.text

@@ -25,7 +25,7 @@
 |---|---|---|
 | 划词接力 | 网页端 → DSH | ✅ 稳定 |
 | 分支到 DSH（↪ 按钮，新会话填入上下文） | 网页端 → DSH | ✅ 已修好（直写可见输入框方案） |
-| 划词传送（🐋 气泡） | DSH → 网页端 | ✅ v1.1.1 修点击竞态、v1.1.2 修选区塌缩、v1.2.0 加右键触发模式；桌面实例已实证成功 |
+| 划词传送（🐋 气泡） | DSH → 网页端 | ✅ v1.2.0 修点击竞态与选区塌缩、v1.3.0 加右键触发模式、v1.4.0 增快捷键直发、v1.5.0 扩命中光环；桌面实例已实证成功 |
 
 ## 二、A→B 传送：问题全记录与当前进度
 
@@ -39,15 +39,18 @@
    - 注入失败无自愈 → 已加强制重连重试（只在"明确没写入"时，防重复追加）
    - 划词后气泡不出现（no-selection）→ 已改 mouseup 立即读 + 10ms 补读双保险
    - 连点连发、内容叠加 → 已改气泡编号防重 + 注入改覆盖模式（与 B→A 一致）
-4. **纯 DOM 气泡方案实测「点一下不行、要连点好几下」→ v1.1.1 修复**（10-01 下午，日志铁证 09:34 一秒三连发、09:49 440ms 双发）：点击其实每次都生效并发出，但 `fire()` 同步摘气泡 → 同一手势 mouseup 时气泡已不在 DOM、target 守卫失效 → 残留选区把气泡冒回来 → 用户以为没点上就连点。修法：点击后气泡切「✓ 已发送」保留 500ms + onUp 900ms 发送抑制窗；另 CDP 自愈链路提速（握手 10s→1.5s/条、连接 8s→4s、首试/重试 5s→4s）
-5. **v1.1.1 实测仍失败 → v1.1.2 修复**（10-01 傍晚）：诊断 phase=`bubble-none`、why=`no-selection`、`/inject` 无调用——**气泡压根没冒**（不是点击问题）。根因：DSH 0.20.0 React 密集重渲染在拖选完成瞬间替换节点、选区整个塌缩，立即读和 10ms 补读全扑空。修法：`selectionchange` 拖选过程持续缓存（selCache，80ms 节流）+ mouseup 三层读取（立即 → 等一拍 → 2 秒内缓存兜底，锚点无 rect 用鼠标坐标）；mousedown/发送后作废缓存防误冒。诊断细化 why：`no-selection-object`/`no-ranges`/`collapsed`，新增 `bubble-from-cache` 上报。**10:31 桌面实例首次完整成功**（a2b 132 字注入 ok）。
-6. **v1.2.0（10-01 晚）**：新增 `bubbleTrigger` 配置（select/contextmenu）；多实例版本不一致问题定位并换装实例 B（见第〇节）。
-7. **v1.2.1（10-01 深夜）主攻第一个实例的剩余失败**：桌面实例 v1.1.2 后仍偶发 `bubble-none why: collapsed`（10-31 日志：成功注入后 4 秒同样划法只报 collapsed）。根因：DSH 0.20.0 部分渲染区域在 ShadowRoot 内，这种选区 `window.getSelection()` 表现为 collapsed、`toString()` 为空，selectionchange 缓存同样读不到。修法：新增 `selTextWithComposed()`（toString 为空时回退 `Selection.getComposedRanges()`，Chrome/Edge ≥134 穿透 shadow 边界），readSelection / cacheSelection 统一走它；缓存兜底 2s → 4s。**需重启桌面实例加载**。
-8. **v1.2.2（10-01 夜）修复「点好几下都没反应」（用户 19:17 实测复报）**：诊断显示用户连点多次但日志只有 2 次 a2b-click —— ① `fire()` 失败也走「✓ 已发送 → 消失 + 清缓存 + 900ms 抑制」，第一次点击（恰遇 no-window）失败后，后续点击全被吞；② `/inject` 遇窗口关闭只报 409 不干活。修法：失败分态（「✗ 失败，点击重试」留原地、解除禁用、可立即重试）；`/inject` 窗口没开时**自动开窗再注入**（v1.2.2 行为变更，替代早期「绝不开窗」需求）；客户端 /inject 超时 20s→30s。
-9. **v1.3.0（10-01 深夜）按用户要求重写交互反馈**：v1.2.2 后日志显示 19:28/19:29 两次点击均成功注入（含回读校验），但用户仍感觉「点好几下没反应」——诊断为观感问题：① 气泡锚在选区 rect 顶部中央，跨多行划词时离光标远，用户对光标附近连点全落空；② 注入后按 PID 聚焦进程，profile 多窗口时前台窗口未必是收到内容的那个。重写：气泡锚点改**鼠标光标处**（网页端稳定版同款）；注入成功后对实际页面 `Page.bringToFront`（PID 聚焦降为兜底）；成功 Toast 带内容预览。**遗留**：`cdpWaitForPage` 仍选第一个 chat 页面目标（非聚焦页优先），多窗口时注入页未必是用户正在看的页 —— bringToFront 已保证结果可见，如需「注入到正在看的窗口」须逐个探测 document.hasFocus，留作将来。
-10. **v1.4.0（10-01 夜）按用户指令「重新编程这个功能，不要影响其他功能」重编 A→B 主通道**：用户复报「情况根本没变，还是要连点好几下」。五轮修补证明点击链路本身每次都能成功注入，观感问题根子在 DSH 0.20.0 壳层吞指针的先天环境。重编：**快捷键直发**成主通道 —— 划词后 `Ctrl+Shift+S`（`config.hotkeySend` 可改/可禁用）直接发送，取文本复用气泡同款三层逻辑，成败 Toast 反馈；气泡保留为辅助通道（行为不变，不影响其他功能）；新增全量埋点 `hotkey-send`/`hotkey-none`/`bubble-blocked`（点击到达但防重挡住）/`bubble-miss`（带 dx/dy 落点距离，判断视觉锚点是否偏移）。宿主 normalizeConfig 增加 `hotkeySend` 校验。**桌面实例与 B 实例都需重启加载**。
-11. **v1.4.1（10-01 夜）诊断增强**：`sendSelectionToChat` 文案写死「气泡点击」把快捷键发送也记成气泡点击（排查误导）→ 加 source 参数；埋点全落 diag 缓冲（原 reportStatus 覆盖式 phase 丢历史）；`bubble-miss` 带目标元素；新增 `bubble-covered` 遮挡自检（elementFromPoint）。**19:58 用户实测 + 日志定案**：快捷键成功；气泡点击 3/3 成功、零遮挡；6 次 miss 偏 25~160px —— 机制一直是好的，问题是小药丸 + 外部按下即销毁 = 点偏就消失。
-12. **v1.5.0（10-01 夜）气泡重编 + 自测实证**：22px 透明命中光环（`::after`，target 仍是按钮）+ 药丸加大 + 成功态 1500ms；`window.__dswBubble` 自测把手；`tools/selftest-bubble.cjs`（CDP 无头 Chrome 加载真实 DSH 网页 + 真实插件，XHR 打桩）：中心点击 / 光环内点击 / 光环外销毁 三项全 PASS。**自测关键点：外部 Chrome 打开 `http://127.0.0.1:3080/?token=<token>&dshDesktop=1` 插件照常注入**，DSH 网页端不限 WebView。
+4. **v1.2.0（10-01 下午 ~ 深夜）：气泡可靠性三连修** —— 这一天集中解决「气泡不冒 / 点了没反应 / 偶发失败」三类问题，三条根因各不相同：
+   - **点击竞态**（10-01 下午，日志铁证 09:34 一秒三连发、09:49 440ms 双发）：纯 DOM 气泡方案实测「点一下不行、要连点好几下」。点击其实每次都生效并发出，但 `fire()` 同步摘气泡 → 同一手势 mouseup 时气泡已不在 DOM、target 守卫失效 → 残留选区把气泡冒回来 → 用户以为没点上就连点。修法：点击后气泡切「✓ 已发送」保留 500ms + onUp 900ms 发送抑制窗；另 CDP 自愈链路提速（握手 10s→1.5s/条、连接 8s→4s、首试/重试 5s→4s）
+   - **选区塌缩**（10-01 傍晚）：诊断 phase=`bubble-none`、why=`no-selection`、`/inject` 无调用 —— **气泡压根没冒**（不是点击问题）。根因：DSH 0.20.0 React 密集重渲染在拖选完成瞬间替换节点、选区整个塌缩，立即读和 10ms 补读全扑空。修法：`selectionchange` 拖选过程持续缓存（selCache，80ms 节流）+ mouseup 三层读取（立即 → 等一拍 → 2 秒内缓存兜底，锚点无 rect 用鼠标坐标）；mousedown/发送后作废缓存防误冒。诊断细化 why：`no-selection-object`/`no-ranges`/`collapsed`，新增 `bubble-from-cache` 上报。**10:31 桌面实例首次完整成功**（a2b 132 字注入 ok）
+   - **Shadow DOM 选区读不到**（10-01 深夜，主攻第一个实例的剩余失败）：桌面实例仍偶发 `bubble-none why: collapsed`（10-31 日志：成功注入后 4 秒同样划法只报 collapsed）。根因：DSH 0.20.0 部分渲染区域在 ShadowRoot 内，这种选区 `window.getSelection()` 表现为 collapsed、`toString()` 为空，selectionchange 缓存同样读不到。修法：新增 `selTextWithComposed()`（toString 为空时回退 `Selection.getComposedRanges()`，Chrome/Edge ≥134 穿透 shadow 边界），readSelection / cacheSelection 统一走它；缓存兜底 2s → 4s。**需重启桌面实例加载**
+5. **v1.3.0（10-01 晚 ~ 夜）：触发方式可配置 + 失败可重试**
+   - **新增 `bubbleTrigger` 配置**（10-01 晚，select/contextmenu）；多实例版本不一致问题定位并换装实例 B（见第〇节）
+   - **修复「点好几下都没反应」**（10-01 夜，用户 19:17 实测复报）：诊断显示用户连点多次但日志只有 2 次 a2b-click —— ① `fire()` 失败也走「✓ 已发送 → 消失 + 清缓存 + 900ms 抑制」，第一次点击（恰遇 no-window）失败后，后续点击全被吞；② `/inject` 遇窗口关闭只报 409 不干活。修法：失败分态（「✗ 失败，点击重试」留原地、解除禁用、可立即重试）；`/inject` 窗口没开时**自动开窗再注入**（行为变更，替代早期「绝不开窗」需求）；客户端 /inject 超时 20s→30s
+6. **v1.4.0（10-01 深夜 ~ 夜）：交互反馈重写 + 快捷键直发主通道**
+   - **重写交互反馈**（按用户要求）：日志显示 19:28/19:29 两次点击均成功注入（含回读校验），但用户仍感觉「点好几下没反应」——诊断为观感问题：① 气泡锚在选区 rect 顶部中央，跨多行划词时离光标远，用户对光标附近连点全落空；② 注入后按 PID 聚焦进程，profile 多窗口时前台窗口未必是收到内容的那个。重写：气泡锚点改**鼠标光标处**（网页端稳定版同款）；注入成功后对实际页面 `Page.bringToFront`（PID 聚焦降为兜底）；成功 Toast 带内容预览。**遗留**：`cdpWaitForPage` 仍选第一个 chat 页面目标（非聚焦页优先），多窗口时注入页未必是用户正在看的页 —— bringToFront 已保证结果可见，如需「注入到正在看的窗口」须逐个探测 document.hasFocus，留作将来
+   - **重编 A→B 主通道**（按用户指令「重新编程这个功能，不要影响其他功能」）：用户复报「情况根本没变，还是要连点好几下」。五轮修补证明点击链路本身每次都能成功注入，观感问题根子在 DSH 0.20.0 壳层吞指针的先天环境。重编：**快捷键直发**成主通道 —— 划词后 `Ctrl+Shift+S`（`config.hotkeySend` 可改/可禁用）直接发送，取文本复用气泡同款三层逻辑，成败 Toast 反馈；气泡保留为辅助通道（行为不变，不影响其他功能）；新增全量埋点 `hotkey-send`/`hotkey-none`/`bubble-blocked`（点击到达但防重挡住）/`bubble-miss`（带 dx/dy 落点距离，判断视觉锚点是否偏移）。宿主 normalizeConfig 增加 `hotkeySend` 校验。**桌面实例与 B 实例都需重启加载**
+   - **诊断增强**：`sendSelectionToChat` 文案写死「气泡点击」把快捷键发送也记成气泡点击（排查误导）→ 加 source 参数；埋点全落 diag 缓冲（原 reportStatus 覆盖式 phase 丢历史）；`bubble-miss` 带目标元素；新增 `bubble-covered` 遮挡自检（elementFromPoint）。**19:58 用户实测 + 日志定案**：快捷键成功；气泡点击 3/3 成功、零遮挡；6 次 miss 偏 25~160px —— 机制一直是好的，问题是小药丸 + 外部按下即销毁 = 点偏就消失
+7. **v1.5.0（10-01 夜）气泡重编 + 自测实证**：22px 透明命中光环（`::after`，target 仍是按钮）+ 药丸加大 + 成功态 1500ms；`window.__dswBubble` 自测把手；`tools/selftest-bubble.cjs`（CDP 无头 Chrome 加载真实 DSH 网页 + 真实插件，XHR 打桩）：中心点击 / 光环内点击 / 光环外销毁 三项全 PASS。**自测关键点：外部 Chrome 打开 `http://127.0.0.1:3080/?token=<token>&dshDesktop=1` 插件照常注入**，DSH 网页端不限 WebView。
 
 ### 如果实测还有问题，下一步排查方向
 

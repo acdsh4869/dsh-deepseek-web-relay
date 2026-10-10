@@ -158,7 +158,7 @@ const DEFAULTS = {
    */
   relay: true,
   /**
-   * @deprecated v1.4.1 起网页端改成「划词浮现气泡」，不再往每条回复下面插按钮。
+   * @deprecated v1.4.0 起网页端改成「划词浮现气泡」，不再往每条回复下面插按钮。
    * 这个键保留只为兼容旧配置，已经不再生效。
    */
   relayButtonText: '↪ 转到 DSH 继续',
@@ -167,12 +167,12 @@ const DEFAULTS = {
   /** 注入到 DSH 输入框的内容前缀（page-script 侧也会加，客户端做了去重）。 */
   relayPrefix: '【来自 DeepSeek 网页端上下文，请基于此继续完成后续任务】',
   /**
-   * @deprecated v1.4.1 起不再抓「整条回复」，只带走用户选中的那段文字，
+   * @deprecated v1.4.0 起不再抓「整条回复」，只带走用户选中的那段文字，
    * 所以回复容器选择器已经没有用处。保留键只为兼容旧配置。
    */
   relayBodySelector: '',
   /**
-   * @deprecated v1.4.1 起语义变化：划词选中什么就带什么，不再有「整段对话」模式。
+   * @deprecated v1.4.0 起语义变化：划词选中什么就带什么，不再有「整段对话」模式。
    * 保留键只为兼容旧配置。
    */
   relayIncludeThread: false,
@@ -943,7 +943,7 @@ function pickFreePort() {
 function buildInjectedSource(cfg) {
   const body = fs.readFileSync(path.join(PACKAGE_ROOT, 'page-script.js'), 'utf8')
   const conf = {
-    // v1.4.1：划词气泡只需要「气泡文字 + 前缀 + 上限」三样。
+    // v1.4.0：划词气泡只需要「气泡文字 + 前缀 + 上限」三样。
     // 旧版的 bodySelector / includeThread 已经用不到了（不再抓整条回复）。
     bubbleText: cfg.relayBubbleText,
     prefix: cfg.relayPrefix,
@@ -1799,7 +1799,7 @@ export function apply(ctx, rawConfig) {
       // 📋 持久日志的现场记录（首试 / 自愈 / 终态各步骤都往这里塞）
       const a2b = { chars: text.length }
 
-      // 1) 窗口得开着 —— 没开就**自动打开再注入**（v1.2.2 行为变更）。
+      // 1) 窗口得开着 —— 没开就**自动打开再注入**（v1.3.0 行为变更）。
       //    旧行为是 409 让用户手动去侧边栏开窗（早期需求），但用户实测痛点正是
       //    「第一次点气泡只报错没开窗；手动开完窗，原来的气泡早没了，还得重新
       //    划词重点」——观感就是「要重复点好几遍」。现在：点一下气泡 =
@@ -1938,7 +1938,7 @@ export function apply(ctx, rawConfig) {
       }
 
       // 4) 不管成没成，都把网页端窗口拉到前台 —— 用户要能看见结果。
-      //    v1.3.0：先对**实际注入的那一页**做 Page.bringToFront（精确到窗口），
+      //    v1.4.0：先对**实际注入的那一页**做 Page.bringToFront（精确到窗口），
       //    再退而求其次按 PID 聚焦进程 —— 以前只按 PID 聚焦，profile 里若堆了
       //    多个 chat 窗口，被推到前台的未必是收到内容的那个，用户盯着空输入框
       //    以为「点了好几下都没反应」。
